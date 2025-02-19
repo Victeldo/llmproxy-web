@@ -34,10 +34,10 @@ def main():
         session_id='GenericSession'
     )
 
-    if isinstance(response, dict):
-        response_text = response.get('response', 'No response received')
-    else:
-        response_text = str(response)  # Handle case where response is a string
+    response_text = response['response']
+    
+    # Send response back
+    print(response_text)
 
     return jsonify({"text": response_text})
     
