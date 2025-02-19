@@ -33,8 +33,8 @@ def main():
         lastk=0,
         session_id='GenericSession'
     )
-    print(response)
-    response_text = response['response']
+
+    response_text = response['text']
     
     # Send response back
     print(response_text)
