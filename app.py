@@ -11,7 +11,7 @@ news_key = os.environ.get("newsKey")
 news_url = os.environ.get("newsUrl")
     
 
-@app.route('/')
+@app.route('/', methods=['POST'])
 def hello_world():
    return jsonify({"text":'Hello from Koyeb - you reached the main page!'})
 
