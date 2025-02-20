@@ -2,6 +2,7 @@ import requests
 from flask import Flask, request, jsonify
 from llmproxy import generate
 from datetime import datetime, timedelta
+import os
 
 
 app = Flask(__name__)
