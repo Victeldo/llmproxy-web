@@ -13,50 +13,64 @@ news_url = os.environ.get("newsUrl")
 
 @app.route('/', methods=['POST'])
 def main():
-    data = request.get_json() 
+    data = request.get_json()
 
     # Extract relevant information
     user = data.get("user_name", "Unknown")
     message = data.get("text", "")
-
     print(data)
 
-    # Ignore bot messages
+    # Ignore bot messages or empty input
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
 
     print(f"Message from {user} : {message}")
 
-    # Fetch news articles using a dynamic date (one week ago)
+    # Step 1: Extract the main keyword from the natural language request
+    keyword_prompt = (
+        "Extract the main keyword from the following request. "
+        "Return only the keyword: " + message
+    )
+    extraction_response = generate(
+        model='4o-mini',
+        system="You are a keyword extraction assistant.",
+        query=keyword_prompt,
+        temperature=0.0,
+        lastk=0,
+        session_id='KeywordExtractionSession'
+    )
+    # Ensure the keyword is stripped of extra whitespace or punctuation
+    keyword = extraction_response.get('response', '').strip()
+    print(f"Extracted keyword: {keyword}")
 
+    # Step 2: Fetch news articles using a dynamic date (one week ago)
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
-        "q": message,
+        "q": keyword,  # Using the extracted keyword
         "from": from_date,
         "sortBy": "popularity",
         "pageSize": 5,
         "apiKey": news_key
     }
     try:
-        response = requests.get(news_url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == "ok":
-                articles = data.get("articles", [])
+        news_response = requests.get(news_url, params=params)
+        if news_response.status_code == 200:
+            data_json = news_response.json()
+            if data_json.get("status") == "ok":
+                articles = data_json.get("articles", [])
             else:
-                print("Error from news API:", data.get("message"))
+                print("Error from news API:", data_json.get("message"))
                 articles = []
         else:
-            print(f"Error: Received status code {response.status_code} from news API.")
+            print(f"Error: Received status code {news_response.status_code} from news API.")
             articles = []
     except Exception as e:
         print("An exception occurred while fetching news:", e)
         articles = []
 
-
     if not articles:
-        response_text = f"Sorry, no news articles found for the topic '{message}'."
+        response_text = f"Sorry, no news articles found for the topic '{keyword}'."
     else:
         news_content = ""
         for article in articles:
@@ -73,7 +87,7 @@ def main():
 
         llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
 
-        response = generate(
+        summary_response = generate(
             model='4o-mini',
             system=system_instruction,
             query=llm_query,
@@ -81,8 +95,8 @@ def main():
             lastk=0,
             session_id='GenericSession'
         )
-        response_text = response['response']
-    
+        response_text = summary_response.get('response', '')
+
     print(response_text)
     return jsonify({"text": response_text})
 # def hello_world():
