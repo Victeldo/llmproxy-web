@@ -89,7 +89,7 @@ def main():
 #    return jsonify({"text":'Hello from Koyeb - you reached the main page!'})
 
 @app.route('/query', methods=['POST'])
-def main():
+def test():
     data = request.get_json() 
 
     # Extract relevant information
