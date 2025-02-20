@@ -85,7 +85,7 @@ def main():
             lastk=0,
             session_id='GenericSession'
         )
-        response_text = response['text']
+        response_text = response['response']
     
     print(response_text)
     return jsonify({"text": response_text})
