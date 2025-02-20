@@ -112,7 +112,7 @@ def test():
         "q": message,
         "from": from_date,
         "sortBy": "popularity",
-        "pageSize": 5,
+        "pageSize": 10,
         "apiKey": news_key
     }
     try:
@@ -146,6 +146,7 @@ def test():
             "You are a news summarizer and explainer. "
             "Provide a concise summary of the following news articles about the chosen topic, explain their implications, "
             "and highlight any contrasting viewpoints. Lastly, mention any important trends amongst all the articles."
+            "Only focus on articles relevant to the key term of: " + message 
         )
 
         llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
