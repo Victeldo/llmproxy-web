@@ -104,7 +104,7 @@ def main():
     print(f"Classified intent: {intent}")
     
     # Handle based on intent
-    if intent == "1":  # New news query
+    if "1" in intent:  # New news query
         # Extract keyword
         keyword = keyword_extraction_agent(message, session_id)
         print(f"Extracted keyword: '{keyword}'")
@@ -125,14 +125,14 @@ def main():
             "or if they're satisfied with this summary."
         )
         
-    elif intent == "2":  # Refinement request
+    elif "2" in intent:  # Refinement request
         # The refinement context will be available through lastk
         main_prompt = (
             "The user has asked to refine the previous summary. "
             "Please provide a refined analysis based on their specific feedback: " + message
         )
         
-    elif intent == "3":  # Confirmation
+    elif "3" in intent:  # Confirmation
         main_prompt = (
             "The user has confirmed they are satisfied with the summary. "
             "Thank them and ask if they would like to explore another news topic."
