@@ -9,11 +9,10 @@ app = Flask(__name__)
 news_key = os.environ.get("newsKey")
 news_url = os.environ.get("newsUrl")
 
-# A simple in-memory session store for concurrent users.
+# In-memory session store keyed by session_id.
 sessions = {}
 
 def keyword_extraction_agent(message, session_id):
-    """Extract the main keyword from the user query."""
     keyword_prompt = (
         "Extract the main keyword from the following request. "
         "Return only the keyword: " + message
@@ -30,7 +29,6 @@ def keyword_extraction_agent(message, session_id):
     return keyword
 
 def news_fetching_agent(keyword):
-    """Fetch news articles related to the extracted keyword."""
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
@@ -56,7 +54,6 @@ def news_fetching_agent(keyword):
     return articles
 
 def summarization_agent(articles, context, session_id):
-    """Summarize and analyze the fetched news articles."""
     if not articles:
         return f"Sorry, no news articles found for '{context}'."
     
@@ -87,7 +84,7 @@ def summarization_agent(articles, context, session_id):
 def main():
     data = request.get_json()
     user = data.get("user_name", "Unknown")
-    # Use a session_id from the JSON if available; otherwise, default to user.
+    # Ensure a persistent session identifier is provided. If not, default to user.
     session_id = data.get("session_id", user)
     message = data.get("text", "").strip()
     
@@ -95,37 +92,42 @@ def main():
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
-    # Debug: Log incoming message and session info.
-    print(f"Received message from {user} (session_id: {session_id}). Message: {message}")
+    # Debug log: show incoming session info and message.
+    print(f"Received message from user: '{user}', session_id: '{session_id}', Message: '{message}'")
     
-    # Retrieve or create a session for the user.
+    # Retrieve or create the session for the session_id.
     if session_id not in sessions:
+        print(f"Creating new session for session_id: '{session_id}'")
         sessions[session_id] = {"state": "start"}
     session = sessions[session_id]
-    print("Current session state:", session["state"])
+    print("Current session state:", session)
     
     # --- State 1: Initial Request ---
     if session["state"] == "start":
+        # Run keyword extraction.
         keyword = keyword_extraction_agent(message, session_id)
         session["keyword"] = keyword
+        print(f"Extracted keyword: '{keyword}'")
         
+        # Fetch news articles.
         articles = news_fetching_agent(keyword)
         session["articles"] = articles
         
+        # If no articles found, go to human intervention.
         if not articles:
             session["state"] = "human_intervention"
             return jsonify({
                 "text": f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
             })
         
+        # Summarize articles.
         summary = summarization_agent(articles, keyword, session_id)
         session["summary"] = summary
         
-        # Transition to a state where the human must confirm the summary.
+        # Transition to awaiting human confirmation.
         session["state"] = "awaiting_confirmation"
         return jsonify({
-            "text": f"Summary for '{keyword}':\n{summary}\n\n"
-                    "If this summary is acceptable, please reply with 'confirm'. "
+            "text": f"Summary for '{keyword}':\n{summary}\n\nIf this summary is acceptable, please reply with 'confirm'. "
                     "Otherwise, provide feedback to refine the summary."
         })
     
@@ -135,7 +137,9 @@ def main():
             session["state"] = "complete"
             return jsonify({"text": "Thank you! The summary has been confirmed."})
         else:
+            # Use the user's feedback to refine the summary.
             refined_context = session["keyword"] + " " + message
+            print(f"Refining summary with context: '{refined_context}'")
             summary = summarization_agent(session["articles"], refined_context, session_id)
             session["summary"] = summary
             return jsonify({
@@ -144,6 +148,7 @@ def main():
     
     # --- State 3: Completed Session ---
     elif session["state"] == "complete":
+        # Reset session for new queries.
         sessions[session_id] = {"state": "start"}
         return jsonify({
             "text": "Session complete. Please send a new query to start again."
