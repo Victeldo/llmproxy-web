@@ -1,32 +1,19 @@
+import os
 import requests
 from flask import Flask, request, jsonify
 from llmproxy import generate
 from datetime import datetime, timedelta
-import os
-
 
 app = Flask(__name__)
 
 news_key = os.environ.get("newsKey")
 news_url = os.environ.get("newsUrl")
-    
 
-@app.route('/', methods=['POST'])
-def main():
-    data = request.get_json()
+# A simple in-memory session store for concurrent users.
+sessions = {}
 
-    # Extract relevant information
-    user = data.get("user_name", "Unknown")
-    message = data.get("text", "")
-    print(data)
-
-    # Ignore bot messages or empty input
-    if data.get("bot") or not message:
-        return jsonify({"status": "ignored"})
-
-    print(f"Message from {user} : {message}")
-
-    # Step 1: Extract the main keyword from the natural language request
+def keyword_extraction_agent(message):
+    """Agent that extracts the main keyword from the user query."""
     keyword_prompt = (
         "Extract the main keyword from the following request. "
         "Return only the keyword: " + message
@@ -39,20 +26,21 @@ def main():
         lastk=0,
         session_id='KeywordExtractionSession'
     )
-    # Ensure the keyword is stripped of extra whitespace or punctuation
     keyword = extraction_response.get('response', '').strip()
-    print(f"Extracted keyword: {keyword}")
+    return keyword
 
-    # Step 2: Fetch news articles using a dynamic date (one week ago)
+def news_fetching_agent(keyword):
+    """Agent that fetches news articles related to the extracted keyword."""
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
-        "q": keyword,  # Using the extracted keyword
+        "q": keyword,
         "from": from_date,
         "sortBy": "popularity",
         "pageSize": 5,
         "apiKey": news_key
     }
+    articles = []
     try:
         news_response = requests.get(news_url, params=params)
         if news_response.status_code == 200:
@@ -61,123 +49,116 @@ def main():
                 articles = data_json.get("articles", [])
             else:
                 print("Error from news API:", data_json.get("message"))
-                articles = []
         else:
             print(f"Error: Received status code {news_response.status_code} from news API.")
-            articles = []
     except Exception as e:
-        print("An exception occurred while fetching news:", e)
-        articles = []
+        print("Exception while fetching news:", e)
+    return articles
 
+def summarization_agent(articles, context):
+    """Agent that summarizes and analyzes the news articles."""
     if not articles:
-        response_text = f"Sorry, no news articles found for the topic '{keyword}'."
-    else:
-        news_content = ""
-        for article in articles:
-            title = article.get("title", "No title")
-            description = article.get("description", "No description provided")
-            url = article.get("url", "No URL")
-            news_content += f"Title: {title}\nDescription: {description}\nURL: {url}\n\n"
+        return f"Sorry, no news articles found for '{context}'."
+    
+    news_content = ""
+    for article in articles:
+        title = article.get("title", "No title")
+        description = article.get("description", "No description provided")
+        url = article.get("url", "No URL")
+        news_content += f"Title: {title}\nDescription: {description}\nURL: {url}\n\n"
+    
+    system_instruction = (
+        "You are a news summarizer and explainer. Provide a concise summary of the following "
+        "news articles about the chosen topic, explain their implications, and highlight any "
+        "contrasting viewpoints. Lastly, mention any important trends."
+    )
+    llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
+    
+    summary_response = generate(
+        model='4o-mini',
+        system=system_instruction,
+        query=llm_query,
+        temperature=0.0,
+        lastk=0,
+        session_id='SummarizationSession'
+    )
+    return summary_response.get('response', '')
 
-        system_instruction = (
-            "You are a news summarizer and explainer. "
-            "Provide a concise summary of the following news articles about the chosen topic, explain their implications, "
-            "and highlight any contrasting viewpoints. Lastly, mention any important trends amongst all the articles."
-        )
-
-        llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
-
-        summary_response = generate(
-            model='4o-mini',
-            system=system_instruction,
-            query=llm_query,
-            temperature=0.0,
-            lastk=0,
-            session_id='GenericSession'
-        )
-        response_text = summary_response.get('response', '')
-
-    print(response_text)
-    return jsonify({"text": response_text})
-# def hello_world():
-#    return jsonify({"text":'Hello from Koyeb - you reached the main page!'})
-
-@app.route('/query', methods=['POST'])
-def test():
-    data = request.get_json() 
-
-    # Extract relevant information
+@app.route('/', methods=['POST'])
+def main():
+    data = request.get_json()
     user = data.get("user_name", "Unknown")
-    message = data.get("text", "")
-
-    print(data)
-
-    # Ignore bot messages
+    message = data.get("text", "").strip()
+    
+    # Ignore bot messages or empty input.
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
-
-    print(f"Message from {user} : {message}")
-
-    # Fetch news articles using a dynamic date (one week ago)
-
-    one_week_ago_date = datetime.today() - timedelta(days=7)
-    from_date = one_week_ago_date.strftime("%Y-%m-%d")
-    params = {
-        "q": message,
-        "from": from_date,
-        "sortBy": "popularity",
-        "pageSize": 10,
-        "apiKey": news_key
-    }
-    try:
-        response = requests.get(news_url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("status") == "ok":
-                articles = data.get("articles", [])
-            else:
-                print("Error from news API:", data.get("message"))
-                articles = []
+    
+    # Retrieve or create a session for the user.
+    if user not in sessions:
+        sessions[user] = {"state": "start"}
+    session = sessions[user]
+    
+    # --- State 1: Initial Request ---
+    if session["state"] == "start":
+        # Agent 1: Extract keyword.
+        keyword = keyword_extraction_agent(message)
+        session["keyword"] = keyword
+        
+        # Agent 2: Fetch news articles.
+        articles = news_fetching_agent(keyword)
+        session["articles"] = articles
+        
+        # If no articles are found, involve the human.
+        if not articles:
+            session["state"] = "human_intervention"
+            return jsonify({
+                "text": f"Sorry, no news articles found for '{keyword}'. "
+                        "Please refine your query or provide additional context."
+            })
+        
+        # Agent 3: Summarize news articles.
+        summary = summarization_agent(articles, keyword)
+        session["summary"] = summary
+        
+        # Transition to a state where the human must confirm the summary.
+        session["state"] = "awaiting_confirmation"
+        return jsonify({
+            "text": f"Summary for '{keyword}':\n{summary}\n\n"
+                    "If this summary is acceptable, please reply with 'confirm'. "
+                    "Otherwise, provide feedback to refine the summary."
+        })
+    
+    # --- State 2: Awaiting Human Confirmation/Feedback ---
+    elif session["state"] == "awaiting_confirmation":
+        if message.lower() == "confirm":
+            session["state"] = "complete"
+            return jsonify({"text": "Thank you! The summary has been confirmed."})
         else:
-            print(f"Error: Received status code {response.status_code} from news API.")
-            articles = []
-    except Exception as e:
-        print("An exception occurred while fetching news:", e)
-        articles = []
-
-
-    if not articles:
-        response_text = f"Sorry, no news articles found for the topic '{message}'."
+            # Human provided feedback—refine the context for the summarization.
+            refined_context = session["keyword"] + " " + message
+            summary = summarization_agent(session["articles"], refined_context)
+            session["summary"] = summary
+            return jsonify({
+                "text": f"Refined Summary:\n{summary}\n\n"
+                        "Please reply with 'confirm' if this is acceptable."
+            })
+    
+    # --- State 3: Completed Session ---
+    elif session["state"] == "complete":
+        # Reset the session for a new query.
+        sessions[user] = {"state": "start"}
+        return jsonify({
+            "text": "Session complete. Please send a new query to start again."
+        })
+    
+    # --- Fallback: Resetting Session ---
     else:
-        news_content = ""
-        for article in articles:
-            title = article.get("title", "No title")
-            description = article.get("description", "No description provided")
-            url = article.get("url", "No URL")
-            news_content += f"Title: {title}\nDescription: {description}\nURL: {url}\n\n"
+        sessions[user] = {"state": "start"}
+        return jsonify({
+            "text": "Resetting session. Please send a new query."
+        })
 
-        system_instruction = (
-            "You are a news summarizer and explainer. "
-            "Provide a concise summary of the following news articles about the chosen topic, explain their implications, "
-            "and highlight any contrasting viewpoints. Lastly, mention any important trends amongst all the articles."
-            "Only focus on articles relevant to the key term of: " + message 
-        )
-
-        llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
-
-        response = generate(
-            model='4o-mini',
-            system=system_instruction,
-            query=llm_query,
-            temperature=0.0,
-            lastk=0,
-            session_id='GenericSession'
-        )
-        response_text = response['response']
-    
-    print(response_text)
-    return jsonify({"text": response_text})
-    
 @app.errorhandler(404)
 def page_not_found(e):
     return "Not Found", 404
