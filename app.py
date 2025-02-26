@@ -12,8 +12,8 @@ news_url = os.environ.get("newsUrl")
 # A simple in-memory session store for concurrent users.
 sessions = {}
 
-def keyword_extraction_agent(message):
-    """Agent that extracts the main keyword from the user query."""
+def keyword_extraction_agent(message, session_id):
+    """Extract the main keyword from the user query."""
     keyword_prompt = (
         "Extract the main keyword from the following request. "
         "Return only the keyword: " + message
@@ -24,13 +24,13 @@ def keyword_extraction_agent(message):
         query=keyword_prompt,
         temperature=0.0,
         lastk=0,
-        session_id='KeywordExtractionSession'
+        session_id=session_id + "_KeywordExtraction"
     )
     keyword = extraction_response.get('response', '').strip()
     return keyword
 
 def news_fetching_agent(keyword):
-    """Agent that fetches news articles related to the extracted keyword."""
+    """Fetch news articles related to the extracted keyword."""
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
@@ -55,8 +55,8 @@ def news_fetching_agent(keyword):
         print("Exception while fetching news:", e)
     return articles
 
-def summarization_agent(articles, context):
-    """Agent that summarizes and analyzes the news articles."""
+def summarization_agent(articles, context, session_id):
+    """Summarize and analyze the fetched news articles."""
     if not articles:
         return f"Sorry, no news articles found for '{context}'."
     
@@ -68,9 +68,8 @@ def summarization_agent(articles, context):
         news_content += f"Title: {title}\nDescription: {description}\nURL: {url}\n\n"
     
     system_instruction = (
-        "You are a news summarizer and explainer. Provide a concise summary of the following "
-        "news articles about the chosen topic, explain their implications, and highlight any "
-        "contrasting viewpoints. Lastly, mention any important trends."
+        "You are a news summarizer and explainer. Provide a concise summary of the following news articles about the chosen topic, "
+        "explain their implications, and highlight any contrasting viewpoints. Lastly, mention any important trends."
     )
     llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
     
@@ -80,7 +79,7 @@ def summarization_agent(articles, context):
         query=llm_query,
         temperature=0.0,
         lastk=0,
-        session_id='SummarizationSession'
+        session_id=session_id + "_Summarization"
     )
     return summary_response.get('response', '')
 
@@ -88,37 +87,38 @@ def summarization_agent(articles, context):
 def main():
     data = request.get_json()
     user = data.get("user_name", "Unknown")
+    # Use a session_id from the JSON if available; otherwise, default to user.
+    session_id = data.get("session_id", user)
     message = data.get("text", "").strip()
     
     # Ignore bot messages or empty input.
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
+    # Debug: Log incoming message and session info.
+    print(f"Received message from {user} (session_id: {session_id}). Message: {message}")
+    
     # Retrieve or create a session for the user.
-    if user not in sessions:
-        sessions[user] = {"state": "start"}
-    session = sessions[user]
+    if session_id not in sessions:
+        sessions[session_id] = {"state": "start"}
+    session = sessions[session_id]
+    print("Current session state:", session["state"])
     
     # --- State 1: Initial Request ---
     if session["state"] == "start":
-        # Agent 1: Extract keyword.
-        keyword = keyword_extraction_agent(message)
+        keyword = keyword_extraction_agent(message, session_id)
         session["keyword"] = keyword
         
-        # Agent 2: Fetch news articles.
         articles = news_fetching_agent(keyword)
         session["articles"] = articles
         
-        # If no articles are found, involve the human.
         if not articles:
             session["state"] = "human_intervention"
             return jsonify({
-                "text": f"Sorry, no news articles found for '{keyword}'. "
-                        "Please refine your query or provide additional context."
+                "text": f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
             })
         
-        # Agent 3: Summarize news articles.
-        summary = summarization_agent(articles, keyword)
+        summary = summarization_agent(articles, keyword, session_id)
         session["summary"] = summary
         
         # Transition to a state where the human must confirm the summary.
@@ -135,26 +135,23 @@ def main():
             session["state"] = "complete"
             return jsonify({"text": "Thank you! The summary has been confirmed."})
         else:
-            # Human provided feedback—refine the context for the summarization.
             refined_context = session["keyword"] + " " + message
-            summary = summarization_agent(session["articles"], refined_context)
+            summary = summarization_agent(session["articles"], refined_context, session_id)
             session["summary"] = summary
             return jsonify({
-                "text": f"Refined Summary:\n{summary}\n\n"
-                        "Please reply with 'confirm' if this is acceptable."
+                "text": f"Refined Summary:\n{summary}\n\nPlease reply with 'confirm' if this is acceptable."
             })
     
     # --- State 3: Completed Session ---
     elif session["state"] == "complete":
-        # Reset the session for a new query.
-        sessions[user] = {"state": "start"}
+        sessions[session_id] = {"state": "start"}
         return jsonify({
             "text": "Session complete. Please send a new query to start again."
         })
     
-    # --- Fallback: Resetting Session ---
+    # --- Fallback: Reset Session ---
     else:
-        sessions[user] = {"state": "start"}
+        sessions[session_id] = {"state": "start"}
         return jsonify({
             "text": "Resetting session. Please send a new query."
         })
