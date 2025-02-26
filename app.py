@@ -9,6 +9,7 @@ app = Flask(__name__)
 
 news_key = os.environ.get("newsKey")
 news_url = os.environ.get("newsUrl")
+app.secret_key = os.environ.get("flaskKey")  # Use your environment variable
 
 # In-memory session store keyed by session_id.
 sessions = {}
@@ -94,23 +95,23 @@ def main():
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
-    # Get conversation ID (this is more reliable than user ID)
+    # Get conversation ID
     conversation_id = data.get("channel_id", data.get("conversation_id", data.get("chat_id", "default")))
     
     # Create a deterministic session ID
     session_id = f"{conversation_id}_{user}"
     print(f"Using session_id: {session_id}")
     
-    # Properly check for existing session before creating a new one
-    if session_id not in sessions:
-        print(f"Creating new session for session_id: '{session_id}'")
-        sessions[session_id] = {"state": "start"}
-    else:
-        print(f"Using existing session for session_id: '{session_id}'")
+    # Store the session ID in Flask's session
+    if 'session_id' not in session:
+        session['session_id'] = session_id
     
-    # Get session
-    session = sessions[session_id]
-    print(f"Current session state: {session['state']}")
+    # Initialize or retrieve state from Flask session
+    if 'state' not in session:
+        print(f"Creating new session state for session_id: '{session_id}'")
+        session['state'] = "start"
+    else:
+        print(f"Using existing session state: {session['state']} for session_id: '{session_id}'")
     
     # Prepare response
     response_data = {
@@ -118,52 +119,57 @@ def main():
     }
     
     # Process based on state
-    if session["state"] == "start":
+    if session['state'] == "start":
         # Agent 1: Keyword Extraction
         keyword = keyword_extraction_agent(message, session_id)
-        session["keyword"] = keyword
+        session['keyword'] = keyword
         print(f"Extracted keyword: '{keyword}'")
         
         # Agent 2: Fetch news articles
         articles = news_fetching_agent(keyword)
-        session["articles"] = articles
+        
+        # Store articles in the session (serialize if needed)
+        session['articles'] = articles
         
         # If no articles found
         if not articles:
-            session["state"] = "human_intervention"
+            session['state'] = "human_intervention"
             response_data["text"] = f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
         else:
             # Agent 3: Summarize articles
             summary = summarization_agent(articles, keyword, session_id)
-            session["summary"] = summary
+            session['summary'] = summary
             
             # Transition to awaiting confirmation
-            session["state"] = "awaiting_confirmation"
+            session['state'] = "awaiting_confirmation"
             response_data["text"] = (f"Summary for '{keyword}':\n{summary}\n\n"
                     "If this summary is acceptable, please reply with 'confirm'. "
                     "Otherwise, provide feedback to refine the summary.")
     
-    elif session["state"] == "awaiting_confirmation":
+    elif session['state'] == "awaiting_confirmation":
         if message.lower() == "confirm":
-            session["state"] = "complete"
+            session['state'] = "complete"
             response_data["text"] = "Thank you! The summary has been confirmed."
         else:
             # Refine the summary using the user's feedback
-            keyword = session.get("keyword", "")
+            keyword = session.get('keyword', "")
+            articles = session.get('articles', [])
             refined_context = f"{keyword} {message}"
             print(f"Refining summary with context: '{refined_context}'")
-            summary = summarization_agent(session["articles"], refined_context, session_id)
-            session["summary"] = summary
+            summary = summarization_agent(articles, refined_context, session_id)
+            session['summary'] = summary
             response_data["text"] = f"Refined Summary:\n{summary}\n\nPlease reply with 'confirm' if this is acceptable."
     
-    elif session["state"] == "complete":
+    elif session['state'] == "complete":
         # Reset session for new queries
-        sessions[session_id] = {"state": "start"}
+        session.clear()
+        session['state'] = "start"
         response_data["text"] = "Session complete. Please send a new query to start again."
     
     else:
         # Fallback for unknown states
-        sessions[session_id] = {"state": "start"}
+        session.clear()
+        session['state'] = "start"
         response_data["text"] = "Resetting session. Please send a new query."
     
     print(f"Session state after processing: {session['state']}")
