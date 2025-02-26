@@ -12,7 +12,7 @@ news_url = os.environ.get("newsUrl")
 app.secret_key = os.environ.get("flaskKey")  # Use your environment variable
 
 # In-memory session store keyed by session_id.
-sessions = {}
+session = {}
 
 def keyword_extraction_agent(message, session_id):
     """Extract the main keyword from the user query using the persistent session id."""
@@ -103,11 +103,11 @@ def main():
     print(f"Using session_id: {session_id}")
     
     # Store the session ID in Flask's session
-    if 'session_id' not in sessions:
+    if 'session_id' not in session:
         session['session_id'] = session_id
     
     # Initialize or retrieve state from Flask session
-    if 'state' not in sessions:
+    if 'state' not in session:
         print(f"Creating new session state for session_id: '{session_id}'")
         session['state'] = "start"
     else:
