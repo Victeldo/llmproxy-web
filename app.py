@@ -13,6 +13,7 @@ news_url = os.environ.get("newsUrl")
 sessions = {}
 
 def keyword_extraction_agent(message, session_id):
+    """Extract the main keyword from the user query using the persistent session id."""
     keyword_prompt = (
         "Extract the main keyword from the following request. "
         "Return only the keyword: " + message
@@ -23,12 +24,13 @@ def keyword_extraction_agent(message, session_id):
         query=keyword_prompt,
         temperature=0.0,
         lastk=0,
-        session_id=session_id + "_KeywordExtraction"
+        session_id=session_id  # Use the same session id
     )
     keyword = extraction_response.get('response', '').strip()
     return keyword
 
 def news_fetching_agent(keyword):
+    """Fetch news articles related to the extracted keyword."""
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
@@ -54,6 +56,7 @@ def news_fetching_agent(keyword):
     return articles
 
 def summarization_agent(articles, context, session_id):
+    """Summarize and analyze the news articles using the persistent session id."""
     if not articles:
         return f"Sorry, no news articles found for '{context}'."
     
@@ -76,7 +79,7 @@ def summarization_agent(articles, context, session_id):
         query=llm_query,
         temperature=0.0,
         lastk=0,
-        session_id=session_id + "_Summarization"
+        session_id=session_id  # Use the same session id
     )
     return summary_response.get('response', '')
 
@@ -84,7 +87,7 @@ def summarization_agent(articles, context, session_id):
 def main():
     data = request.get_json()
     user = data.get("user_name", "Unknown")
-    # Ensure a persistent session identifier is provided. If not, default to user.
+    # Ensure a persistent session identifier is provided; default to user if not.
     session_id = data.get("session_id", user)
     message = data.get("text", "").strip()
     
@@ -104,30 +107,31 @@ def main():
     
     # --- State 1: Initial Request ---
     if session["state"] == "start":
-        # Run keyword extraction.
+        # Agent 1: Keyword Extraction.
         keyword = keyword_extraction_agent(message, session_id)
         session["keyword"] = keyword
         print(f"Extracted keyword: '{keyword}'")
         
-        # Fetch news articles.
+        # Agent 2: Fetch news articles.
         articles = news_fetching_agent(keyword)
         session["articles"] = articles
         
-        # If no articles found, go to human intervention.
+        # If no articles are found, go to human intervention.
         if not articles:
             session["state"] = "human_intervention"
             return jsonify({
                 "text": f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
             })
         
-        # Summarize articles.
+        # Agent 3: Summarize articles.
         summary = summarization_agent(articles, keyword, session_id)
         session["summary"] = summary
         
         # Transition to awaiting human confirmation.
         session["state"] = "awaiting_confirmation"
         return jsonify({
-            "text": f"Summary for '{keyword}':\n{summary}\n\nIf this summary is acceptable, please reply with 'confirm'. "
+            "text": f"Summary for '{keyword}':\n{summary}\n\n"
+                    "If this summary is acceptable, please reply with 'confirm'. "
                     "Otherwise, provide feedback to refine the summary."
         })
     
@@ -137,7 +141,7 @@ def main():
             session["state"] = "complete"
             return jsonify({"text": "Thank you! The summary has been confirmed."})
         else:
-            # Use the user's feedback to refine the summary.
+            # Refine the summary using the user's feedback.
             refined_context = session["keyword"] + " " + message
             print(f"Refining summary with context: '{refined_context}'")
             summary = summarization_agent(session["articles"], refined_context, session_id)
