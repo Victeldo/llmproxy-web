@@ -103,11 +103,11 @@ def main():
     print(f"Using session_id: {session_id}")
     
     # Store the session ID in Flask's session
-    if 'session_id' not in session:
+    if 'session_id' not in sessions:
         session['session_id'] = session_id
     
     # Initialize or retrieve state from Flask session
-    if 'state' not in session:
+    if 'state' not in sessions:
         print(f"Creating new session state for session_id: '{session_id}'")
         session['state'] = "start"
     else:
