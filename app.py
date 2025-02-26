@@ -24,7 +24,7 @@ def keyword_extraction_agent(message, session_id):
         system="You are a keyword extraction assistant.",
         query=keyword_prompt,
         temperature=0.0,
-        lastk=0,
+        lastk=5,
         session_id=session_id  # Use the same session id
     )
     keyword = extraction_response.get('response', '').strip()
@@ -79,7 +79,7 @@ def summarization_agent(articles, context, session_id):
         system=system_instruction,
         query=llm_query,
         temperature=0.0,
-        lastk=0,
+        lastk=10,
         session_id=session_id  # Use the same session id
     )
     return summary_response.get('response', '')
