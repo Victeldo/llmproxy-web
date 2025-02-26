@@ -3,16 +3,11 @@ import requests
 from flask import Flask, request, jsonify
 from llmproxy import generate
 from datetime import datetime, timedelta
-import json
 
 app = Flask(__name__)
 
 news_key = os.environ.get("newsKey")
 news_url = os.environ.get("newsUrl")
-app.secret_key = os.environ.get("flaskKey")  # Use your environment variable
-
-# In-memory session store keyed by session_id.
-session = {}
 
 def keyword_extraction_agent(message, session_id):
     """Extract the main keyword from the user query using the persistent session id."""
@@ -25,8 +20,8 @@ def keyword_extraction_agent(message, session_id):
         system="You are a keyword extraction assistant.",
         query=keyword_prompt,
         temperature=0.0,
-        lastk=5,
-        session_id=session_id  # Use the same session id
+        lastk=10,  # Increased to maintain context
+        session_id=session_id
     )
     keyword = extraction_response.get('response', '').strip()
     return keyword
@@ -57,33 +52,19 @@ def news_fetching_agent(keyword):
         print("Exception while fetching news:", e)
     return articles
 
-def summarization_agent(articles, context, session_id):
-    """Summarize and analyze the news articles using the persistent session id."""
+def format_articles_for_prompt(articles, keyword):
+    """Format articles into a text string for the meta-agent."""
     if not articles:
-        return f"Sorry, no news articles found for '{context}'."
+        return f"No news articles found for '{keyword}'."
     
-    news_content = ""
-    for article in articles:
+    articles_text = f"Here are the latest news articles about '{keyword}':\n\n"
+    for i, article in enumerate(articles[:5], 1):
         title = article.get("title", "No title")
         description = article.get("description", "No description provided")
         url = article.get("url", "No URL")
-        news_content += f"Title: {title}\nDescription: {description}\nURL: {url}\n\n"
+        articles_text += f"Article {i}:\nTitle: {title}\nDescription: {description}\nURL: {url}\n\n"
     
-    system_instruction = (
-        "You are a news summarizer and explainer. Provide a concise summary of the following news articles about the chosen topic, "
-        "explain their implications, and highlight any contrasting viewpoints. Lastly, mention any important trends."
-    )
-    llm_query = f"Summarize and analyze the following news articles:\n\n{news_content}"
-    
-    summary_response = generate(
-        model='4o-mini',
-        system=system_instruction,
-        query=llm_query,
-        temperature=0.0,
-        lastk=10,
-        session_id=session_id  # Use the same session id
-    )
-    return summary_response.get('response', '')
+    return articles_text
 
 @app.route('/', methods=['POST'])
 def main():
@@ -95,87 +76,91 @@ def main():
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
-    # Get conversation ID
+    # Create a consistent session ID for each user
     conversation_id = data.get("channel_id", data.get("conversation_id", data.get("chat_id", "default")))
-    
-    # Create a deterministic session ID
     session_id = f"{conversation_id}_{user}"
-    print(f"Using session_id: {session_id}")
+    print(f"Processing request for session_id: '{session_id}'")
     
-    # Store the session ID in Flask's session
-    if 'session_id' not in session:
-        session['session_id'] = session_id
+    # First, check if this might be a news-related query or follow-up
+    meta_prompt = (
+        "Analyze this user message and determine if it is: "
+        "1. A new query asking for news on a topic, "
+        "2. A follow-up asking to refine a previous summary, "
+        "3. A confirmation of acceptance, or "
+        "4. Something else. "
+        "Return only the number 1, 2, 3, or 4: " + message
+    )
     
-    # Initialize or retrieve state from Flask session
-    if 'state' not in session:
-        print(f"Creating new session state for session_id: '{session_id}'")
-        session['state'] = "start"
-    else:
-        print(f"Using existing session state: {session['state']} for session_id: '{session_id}'")
+    meta_response = generate(
+        model='4o-mini',
+        system="You are a message classifier. Classify messages based on their intent.",
+        query=meta_prompt,
+        temperature=0.0,
+        lastk=0,  # Don't need context for classification
+        session_id=f"{session_id}_meta"  # Separate session for meta-agent
+    )
     
-    # Prepare response
-    response_data = {
-        "session_id": session_id
-    }
+    intent = meta_response.get('response', '').strip()
+    print(f"Classified intent: {intent}")
     
-    # Process based on state
-    if session['state'] == "start":
-        # Agent 1: Keyword Extraction
+    # Handle based on intent
+    if intent == "1":  # New news query
+        # Extract keyword
         keyword = keyword_extraction_agent(message, session_id)
-        session['keyword'] = keyword
         print(f"Extracted keyword: '{keyword}'")
         
-        # Agent 2: Fetch news articles
+        # Fetch news articles
         articles = news_fetching_agent(keyword)
         
-        # Store articles in the session (serialize if needed)
-        session['articles'] = articles
+        # Format articles for the main prompt
+        articles_text = format_articles_for_prompt(articles, keyword)
         
-        # If no articles found
-        if not articles:
-            session['state'] = "human_intervention"
-            response_data["text"] = f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
-        else:
-            # Agent 3: Summarize articles
-            summary = summarization_agent(articles, keyword, session_id)
-            session['summary'] = summary
-            
-            # Transition to awaiting confirmation
-            session['state'] = "awaiting_confirmation"
-            response_data["text"] = (f"Summary for '{keyword}':\n{summary}\n\n"
-                    "If this summary is acceptable, please reply with 'confirm'. "
-                    "Otherwise, provide feedback to refine the summary.")
+        # Ask the main agent to summarize and analyze
+        main_prompt = (
+            f"The user asked about news on '{keyword}'. "
+            f"{articles_text}\n\n"
+            "Please provide a concise summary of these articles, explain their implications, "
+            "highlight any contrasting viewpoints, and mention important trends. "
+            "After your summary, ask if the user would like a more refined analysis "
+            "or if they're satisfied with this summary."
+        )
+        
+    elif intent == "2":  # Refinement request
+        # The refinement context will be available through lastk
+        main_prompt = (
+            "The user has asked to refine the previous summary. "
+            "Please provide a refined analysis based on their specific feedback: " + message
+        )
+        
+    elif intent == "3":  # Confirmation
+        main_prompt = (
+            "The user has confirmed they are satisfied with the summary. "
+            "Thank them and ask if they would like to explore another news topic."
+        )
+        
+    else:  # Intent 4 or any other case
+        main_prompt = (
+            "I'm a news assistant that can help you get summaries and analysis of recent news. "
+            "What topic would you like to know about today?"
+        )
     
-    elif session['state'] == "awaiting_confirmation":
-        if message.lower() == "confirm":
-            session['state'] = "complete"
-            response_data["text"] = "Thank you! The summary has been confirmed."
-        else:
-            # Refine the summary using the user's feedback
-            keyword = session.get('keyword', "")
-            articles = session.get('articles', [])
-            refined_context = f"{keyword} {message}"
-            print(f"Refining summary with context: '{refined_context}'")
-            summary = summarization_agent(articles, refined_context, session_id)
-            session['summary'] = summary
-            response_data["text"] = f"Refined Summary:\n{summary}\n\nPlease reply with 'confirm' if this is acceptable."
+    # Generate the main response
+    main_response = generate(
+        model='4o-mini',
+        system=(
+            "You are a news analyst and summarizer. You provide concise, informative summaries "
+            "of news articles, explain their implications, highlight contrasting viewpoints, "
+            "and identify important trends. Be conversational and engaging."
+        ),
+        query=main_prompt,
+        temperature=0.7,
+        lastk=10,  # Remember conversation history
+        session_id=session_id  # Use the main session ID
+    )
     
-    elif session['state'] == "complete":
-        # Reset session for new queries
-        session.clear()
-        session['state'] = "start"
-        response_data["text"] = "Session complete. Please send a new query to start again."
+    response_text = main_response.get('response', '')
     
-    else:
-        # Fallback for unknown states
-        session.clear()
-        session['state'] = "start"
-        response_data["text"] = "Resetting session. Please send a new query."
-    
-    print(f"Session state after processing: {session['state']}")
-    
-    # Return response
-    return jsonify(response_data)
+    return jsonify({"text": response_text})
 
 @app.errorhandler(404)
 def page_not_found(e):
