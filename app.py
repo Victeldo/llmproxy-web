@@ -94,112 +94,81 @@ def main():
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
-    # CRITICAL: First, log ALL incoming data for debugging
-    print("=" * 50)
-    print("INCOMING REQUEST DATA:")
-    print(json.dumps(data, indent=2))
-    print("=" * 50)
+    # Get conversation ID (this is more reliable than user ID)
+    conversation_id = data.get("channel_id", data.get("conversation_id", data.get("chat_id", "default")))
     
-    # Get session_id - EXPLICITLY force front-end provided value to be primary
-    front_end_session_id = data.get("session_id")
+    # Create a deterministic session ID
+    session_id = f"{conversation_id}_{user}"
+    print(f"Using session_id: {session_id}")
     
-    # If we don't have a session_id, create a CONVERSATION-UNIQUE ID tied to user
-    # This ensures we're tracking the same conversation even if front-end doesn't provide session_id
-    conversation_id = data.get("conversation_id", data.get("channel_id", data.get("chat_id")))
-    
-    # Determine the session_id to use (priority: 1. front_end_session_id, 2. conversation+user)
-    if front_end_session_id:
-        session_id = front_end_session_id
-        print(f"Using front-end provided session_id: {session_id}")
-    elif conversation_id:
-        session_id = f"{conversation_id}_{user}"
-        print(f"Using conversation-based session_id: {session_id} (from conversation: {conversation_id})")
-    else:
-        session_id = f"user_{user}"
-        print(f"Using user-based session_id: {session_id}")
-    
-    # Always include session_id in response for front-end to track
-    response_data = {
-        "session_id": session_id  # This ensures front-end has it for next request
-    }
-    
-    # Debug log: show incoming session info and message.
-    print(f"Processing request with session_id: '{session_id}', Message: '{message}'")
-    
-    # Retrieve or create the session for the session_id.
+    # Properly check for existing session before creating a new one
     if session_id not in sessions:
         print(f"Creating new session for session_id: '{session_id}'")
         sessions[session_id] = {"state": "start"}
+    else:
+        print(f"Using existing session for session_id: '{session_id}'")
     
-    # Log state information before processing
+    # Get session
     session = sessions[session_id]
-    print(f"Current session state BEFORE processing: {session['state']}")
-    print(f"All session data: {json.dumps(session, indent=2, default=str)}")
+    print(f"Current session state: {session['state']}")
     
-    # --- State 1: Initial Request ---
+    # Prepare response
+    response_data = {
+        "session_id": session_id
+    }
+    
+    # Process based on state
     if session["state"] == "start":
-        print("PROCESSING: Initial request state")
-        # Agent 1: Keyword Extraction.
+        # Agent 1: Keyword Extraction
         keyword = keyword_extraction_agent(message, session_id)
         session["keyword"] = keyword
         print(f"Extracted keyword: '{keyword}'")
         
-        # Agent 2: Fetch news articles.
+        # Agent 2: Fetch news articles
         articles = news_fetching_agent(keyword)
         session["articles"] = articles
         
-        # If no articles are found, go to human intervention.
+        # If no articles found
         if not articles:
             session["state"] = "human_intervention"
             response_data["text"] = f"Sorry, no news articles found for '{keyword}'. Please refine your query or provide additional context."
         else:
-            # Agent 3: Summarize articles.
+            # Agent 3: Summarize articles
             summary = summarization_agent(articles, keyword, session_id)
             session["summary"] = summary
             
-            # Transition to awaiting human confirmation.
+            # Transition to awaiting confirmation
             session["state"] = "awaiting_confirmation"
             response_data["text"] = (f"Summary for '{keyword}':\n{summary}\n\n"
                     "If this summary is acceptable, please reply with 'confirm'. "
                     "Otherwise, provide feedback to refine the summary.")
     
-    # --- State 2: Awaiting Human Confirmation/Feedback ---
     elif session["state"] == "awaiting_confirmation":
-        print("PROCESSING: Awaiting confirmation state")
         if message.lower() == "confirm":
             session["state"] = "complete"
             response_data["text"] = "Thank you! The summary has been confirmed."
         else:
-            # Refine the summary using the user's feedback.
-            refined_context = session["keyword"] + " " + message
+            # Refine the summary using the user's feedback
+            keyword = session.get("keyword", "")
+            refined_context = f"{keyword} {message}"
             print(f"Refining summary with context: '{refined_context}'")
             summary = summarization_agent(session["articles"], refined_context, session_id)
             session["summary"] = summary
             response_data["text"] = f"Refined Summary:\n{summary}\n\nPlease reply with 'confirm' if this is acceptable."
     
-    # --- State 3: Completed Session ---
     elif session["state"] == "complete":
-        print("PROCESSING: Complete state - resetting")
-        # Reset session for new queries.
+        # Reset session for new queries
         sessions[session_id] = {"state": "start"}
         response_data["text"] = "Session complete. Please send a new query to start again."
     
-    # --- Fallback: Reset Session ---
     else:
-        print("PROCESSING: Unknown state - resetting")
+        # Fallback for unknown states
         sessions[session_id] = {"state": "start"}
         response_data["text"] = "Resetting session. Please send a new query."
     
-    # Log state information after processing
-    print(f"Session state AFTER processing: {sessions[session_id]['state']}")
-    print(f"All session data AFTER: {json.dumps(sessions[session_id], indent=2, default=str)}")
+    print(f"Session state after processing: {session['state']}")
     
-    # Log all active sessions for debugging
-    print("Active sessions:")
-    for sid, sdata in sessions.items():
-        print(f"  - {sid}: {sdata['state']}")
-    
-    # Return response with session_id
+    # Return response
     return jsonify(response_data)
 
 @app.errorhandler(404)
