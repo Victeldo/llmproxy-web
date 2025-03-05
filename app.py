@@ -83,7 +83,9 @@ def main():
     # Handle specific button clicks
     if message == "interaction_info":
         return jsonify({
-            "text": "You can interact with the bot by typing your queries directly. You can ask for news summaries, request analysis, or refine previous responses. You can also use the buttons provided for quick actions."
+            "text": "You can interact with the bot by typing your queries directly. "
+                    "You can ask for news summaries, request analysis, or refine previous responses. "
+                    "You can also use the buttons provided for quick actions."
         })
     
     elif message == "refine_analysis":
@@ -108,7 +110,7 @@ def main():
         return jsonify({"text": response_text})
     
     else:
-        # If the message is a query, handle it normally
+        # Generate a normal response to a user query
         main_prompt = (
             "Analyze the user's query and provide relevant news or analysis. "
             f"User query: {message}"
@@ -129,36 +131,37 @@ def main():
         
         response_text = main_response.get('response', '')
 
-        # Only show buttons if the response needs further interaction
-        if "Would you like more details?" in response_text:
-            return jsonify({
-                "text": response_text,
-                "attachments": [
-                    {
-                        "title": "Choose an option:",
-                        "text": "Select an action below:",
-                        "actions": [
-                            {
-                                "type": "button",
-                                "text": "📘 How to interact with the bot",
-                                "msg": "interaction_info",
-                                "msg_in_chat_window": True,
-                                "msg_processing_type": "sendMessage"
-                            },
-                            {
-                                "type": "button",
-                                "text": "🧠 Refine and combine all analysis",
-                                "msg": "refine_analysis",
-                                "msg_in_chat_window": True,
-                                "msg_processing_type": "sendMessage"
-                            }
-                        ]
-                    }
-                ]
+        # Default button always included
+        buttons = [
+            {
+                "type": "button",
+                "text": "📘 How to interact with the bot",
+                "msg": "interaction_info",
+                "msg_in_chat_window": True,
+                "msg_processing_type": "sendMessage"
+            }
+        ]
+
+        # Add "Refine and combine all analysis" button if the response suggests more interaction
+        if "Would you like more details?" in response_text or "Do you want me to refine the analysis?" in response_text:
+            buttons.append({
+                "type": "button",
+                "text": "🧠 Refine and combine all analysis",
+                "msg": "refine_analysis",
+                "msg_in_chat_window": True,
+                "msg_processing_type": "sendMessage"
             })
-        else:
-            # Regular response without buttons
-            return jsonify({"text": response_text})
+        
+        return jsonify({
+            "text": response_text,
+            "attachments": [
+                {
+                    "title": "Choose an option:",
+                    "text": "Select an action below:",
+                    "actions": buttons
+                }
+            ]
+        })
 
 @app.errorhandler(404)
 def page_not_found(e):
