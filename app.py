@@ -20,7 +20,7 @@ def keyword_extraction_agent(message, session_id):
         system="You are a keyword extraction assistant.",
         query=keyword_prompt,
         temperature=0.0,
-        lastk=10,  # Increased to maintain context
+        lastk=10,  
         session_id=session_id
     )
     keyword = extraction_response.get('response', '').strip()
@@ -76,91 +76,63 @@ def main():
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
-    # Create a consistent session ID for each user
     conversation_id = data.get("channel_id", data.get("conversation_id", data.get("chat_id", "default")))
     session_id = f"{conversation_id}_{user}"
     print(f"Processing request for session_id: '{session_id}'")
     
-    # First, check if this might be a news-related query or follow-up
-    meta_prompt = (
-        "Analyze this user message and determine if it is: "
-        "1. A new query asking for news on a topic, "
-        "2. A follow-up asking to refine a previous summary, "
-        "3. A confirmation of acceptance, or "
-        "4. Something else. "
-        "Return only the number 1, 2, 3, or 4: " + message
-    )
+    if message == "interaction_info":
+        return jsonify({
+            "text": "You can interact with the bot by typing your queries directly. You can ask for news summaries, request analysis, or refine previous responses. You can also use the buttons provided for quick actions."
+        })
     
-    meta_response = generate(
-        model='4o-mini',
-        system="You are a message classifier. Classify messages based on their intent.",
-        query=meta_prompt,
-        temperature=0.0,
-        lastk=0,  # Don't need context for classification
-        session_id=f"{session_id}_meta"  # Separate session for meta-agent
-    )
-    
-    intent = meta_response.get('response', '').strip()
-    print(f"Classified intent: {intent}")
-    
-    # Handle based on intent
-    if "1" in intent:  # New news query
-        # Extract keyword
-        keyword = keyword_extraction_agent(message, session_id)
-        print(f"Extracted keyword: '{keyword}'")
-        
-        # Fetch news articles
-        articles = news_fetching_agent(keyword)
-        
-        # Format articles for the main prompt
-        articles_text = format_articles_for_prompt(articles, keyword)
-        
-        # Ask the main agent to summarize and analyze
+    elif message == "refine_analysis":
         main_prompt = (
-            f"The user asked about news on '{keyword}'. "
-            f"{articles_text}\n\n"
-            "Please provide a concise summary of these articles, explain their implications, "
-            "highlight any contrasting viewpoints, and mention important trends. "
-            "After your summary, ask if the user would like a more refined analysis "
-            "or if they're satisfied with this summary."
+            "The user has requested to refine and combine all previous analyses. "
+            "Provide a comprehensive summary based on the full history of interactions."
         )
         
-    elif "2" in intent:  # Refinement request
-        # The refinement context will be available through lastk
-        main_prompt = (
-            "The user has asked to refine the previous summary. "
-            "Please provide a refined analysis based on their specific feedback: " + message
+        main_response = generate(
+            model='4o-mini',
+            system=(
+                "You are a news analyst and summarizer. Provide a detailed, refined analysis "
+                "combining all previous information shared in this session. Be concise and insightful."
+            ),
+            query=main_prompt,
+            temperature=0.7,
+            lastk=10,  
+            session_id=session_id
         )
         
-    elif "3" in intent:  # Confirmation
-        main_prompt = (
-            "The user has confirmed they are satisfied with the summary. "
-            "Thank them and ask if they would like to explore another news topic."
-        )
-        
-    else:  # Intent 4 or any other case
-        main_prompt = (
-            "I'm a news assistant that can help you get summaries and analysis of recent news. "
-            "What topic would you like to know about today?"
-        )
+        response_text = main_response.get('response', '')
+        return jsonify({"text": response_text})
     
-    # Generate the main response
-    main_response = generate(
-        model='4o-mini',
-        system=(
-            "You are a news analyst and summarizer. You provide concise, informative summaries "
-            "of news articles, explain their implications, highlight contrasting viewpoints, "
-            "and identify important trends. Be conversational and engaging."
-        ),
-        query=main_prompt,
-        temperature=0.7,
-        lastk=10,  # Remember conversation history
-        session_id=session_id  # Use the main session ID
-    )
-    
-    response_text = main_response.get('response', '')
-    
-    return jsonify({"text": response_text})
+    else:
+        # Default response with buttons for interaction
+        return jsonify({
+            "text": "What would you like to do next?",
+            "attachments": [
+                {
+                    "title": "Choose an option:",
+                    "text": "Select an action below:",
+                    "actions": [
+                        {
+                            "type": "button",
+                            "text": "📘 How to interact with the bot",
+                            "msg": "interaction_info",
+                            "msg_in_chat_window": True,
+                            "msg_processing_type": "sendMessage"
+                        },
+                        {
+                            "type": "button",
+                            "text": "🧠 Refine and combine all analysis",
+                            "msg": "refine_analysis",
+                            "msg_in_chat_window": True,
+                            "msg_processing_type": "sendMessage"
+                        }
+                    ]
+                }
+            ]
+        })
 
 @app.errorhandler(404)
 def page_not_found(e):
