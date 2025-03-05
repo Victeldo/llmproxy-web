@@ -57,12 +57,12 @@ def format_articles_for_prompt(articles, keyword):
     if not articles:
         return f"No news articles found for '{keyword}'."
     
-    articles_text = f"Here are the latest news articles about '{keyword}':\n\n"
+    articles_text = f"📰 **Latest news on '{keyword}':**\n\n"
     for i, article in enumerate(articles[:5], 1):
         title = article.get("title", "No title")
         description = article.get("description", "No description provided")
         url = article.get("url", "No URL")
-        articles_text += f"Article {i}:\nTitle: {title}\nDescription: {description}\nURL: {url}\n\n"
+        articles_text += f"**Article {i}:**\n- **Title:** {title}\n- **Description:** {description}\n- 🔗 [Read more]({url})\n\n"
     
     return articles_text
 
@@ -94,25 +94,27 @@ def main():
     
     elif message == "refine_analysis":
         main_prompt = (
-            "The user has requested to refine and combine all previous analyses. "
-            "Provide a comprehensive summary based on the full history of interactions."
+            "Provide a comprehensive summary based on the full history of interactions. "
+            "Combine and refine all analyses done so far to deliver a clear and detailed insight."
         )
         
         main_response = generate(
             model='4o-mini',
             system=(
-                "You are a news analyst and summarizer. Provide a detailed, refined analysis "
-                "combining all previous information shared in this session. Be concise and insightful."
+                "You are a detailed news analyst. Combine all previous analyses in this session, "
+                "highlighting key insights, trends, and any contrasting viewpoints. "
+                "Provide a concise and clear summary that builds on all past responses."
             ),
             query=main_prompt,
             temperature=0.7,
-            lastk=10,  
+            lastk=10,  # Keep history to refine analysis
             session_id=session_id
         )
         
         response_text = main_response.get('response', '')
+        
         return jsonify({
-            "text": f"🧠 Here's your refined analysis, {user}! Let me know if you need more insights. 😊"
+            "text": f"🧠 Here's your refined analysis, {user}!\n\n{response_text}\n😊 Let me know if you need more insights!"
         })
     
     else:
@@ -125,9 +127,9 @@ def main():
         main_response = generate(
             model='4o-mini',
             system=(
-                "You are a news analyst and summarizer. You provide concise, informative summaries "
+                "You are a friendly and insightful news analyst. Provide concise, informative summaries "
                 "of news articles, explain their implications, highlight contrasting viewpoints, "
-                "and identify important trends. Be conversational and engaging."
+                "and identify important trends. Use a warm and conversational tone."
             ),
             query=main_prompt,
             temperature=0.7,
