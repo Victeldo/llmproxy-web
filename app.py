@@ -20,7 +20,7 @@ def keyword_extraction_agent(message, session_id):
         system="You are a keyword extraction assistant.",
         query=keyword_prompt,
         temperature=0.0,
-        lastk=10,  
+        lastk=10,  # Increased to maintain context
         session_id=session_id
     )
     keyword = extraction_response.get('response', '').strip()
@@ -57,119 +57,110 @@ def format_articles_for_prompt(articles, keyword):
     if not articles:
         return f"No news articles found for '{keyword}'."
     
-    articles_text = f"📰 **Latest news on '{keyword}':**\n\n"
+    articles_text = f"Here are the latest news articles about '{keyword}':\n\n"
     for i, article in enumerate(articles[:5], 1):
         title = article.get("title", "No title")
         description = article.get("description", "No description provided")
         url = article.get("url", "No URL")
-        articles_text += f"**Article {i}:**\n- **Title:** {title}\n- **Description:** {description}\n- 🔗 [Read more]({url})\n\n"
+        articles_text += f"Article {i}:\nTitle: {title}\nDescription: {description}\nURL: {url}\n\n"
     
     return articles_text
 
 @app.route('/', methods=['POST'])
 def main():
     data = request.get_json()
-    user = data.get("user_name", "Friend")
+    user = data.get("user_name", "Unknown")
     message = data.get("text", "").strip()
     
     # Ignore bot messages or empty input.
     if data.get("bot") or not message:
         return jsonify({"status": "ignored"})
     
+    # Create a consistent session ID for each user
     conversation_id = data.get("channel_id", data.get("conversation_id", data.get("chat_id", "default")))
     session_id = f"{conversation_id}_{user}"
     print(f"Processing request for session_id: '{session_id}'")
     
-    # Handle specific button clicks
-    if message == "interaction_info":
-        return jsonify({
-            "text": (
-                "👋 Hi there! You can interact with me by typing your queries directly. \n"
-                "📰 **News Summaries:** Ask me about the latest news on any topic.\n"
-                "🧠 **Analysis Requests:** I can provide insights and detailed analysis.\n"
-                "🔍 **Refine Responses:** Click the buttons for quick actions or ask me to refine my analysis.\n"
-                "😊 I'm here to help, so feel free to ask me anything!"
-            )
-        })
+    # First, check if this might be a news-related query or follow-up
+    meta_prompt = (
+        "Analyze this user message and determine if it is: "
+        "1. A new query asking for news on a topic, "
+        "2. A follow-up asking to refine a previous summary, "
+        "3. A confirmation of acceptance, or "
+        "4. Something else. "
+        "Return only the number 1, 2, 3, or 4: " + message
+    )
     
-    elif message == "refine_analysis":
-        main_prompt = (
-            "Provide a comprehensive summary based on the full history of interactions. "
-            "Combine and refine all analyses done so far to deliver a clear and detailed insight."
-        )
-        
-        main_response = generate(
-            model='4o-mini',
-            system=(
-                "You are a detailed news analyst. Combine all previous analyses in this session, "
-                "highlighting key insights, trends, and any contrasting viewpoints. "
-                "Provide a concise and clear summary that builds on all past responses."
-            ),
-            query=main_prompt,
-            temperature=0.7,
-            lastk=10,  # Keep history to refine analysis
-            session_id=session_id
-        )
-        
-        response_text = main_response.get('response', '')
-        
-        return jsonify({
-            "text": f"🧠 Here's your refined analysis, {user}!\n\n{response_text}\n😊 Let me know if you need more insights!"
-        })
+    meta_response = generate(
+        model='4o-mini',
+        system="You are a message classifier. Classify messages based on their intent.",
+        query=meta_prompt,
+        temperature=0.0,
+        lastk=0,  # Don't need context for classification
+        session_id=f"{session_id}_meta"  # Separate session for meta-agent
+    )
     
-    else:
-        # Generate a normal response to a user query
+    intent = meta_response.get('response', '').strip()
+    print(f"Classified intent: {intent}")
+    
+    # Handle based on intent
+    if "1" in intent:  # New news query
+        # Extract keyword
+        keyword = keyword_extraction_agent(message, session_id)
+        print(f"Extracted keyword: '{keyword}'")
+        
+        # Fetch news articles
+        articles = news_fetching_agent(keyword)
+        
+        # Format articles for the main prompt
+        articles_text = format_articles_for_prompt(articles, keyword)
+        
+        # Ask the main agent to summarize and analyze
         main_prompt = (
-            "Analyze the user's query and provide relevant news or analysis. If the user seems new, just tell them who you are and what you can help them with. "
-            f"User query: {message}"
+            f"The user asked about news on '{keyword}'. "
+            f"{articles_text}\n\n"
+            "Please provide a concise summary of these articles, explain their implications, "
+            "highlight any contrasting viewpoints, and mention important trends. "
+            "After your summary, ask if the user would like a more refined analysis "
+            "or if they're satisfied with this summary."
         )
         
-        main_response = generate(
-            model='4o-mini',
-            system=(
-                "You are a friendly and insightful news analyst. Provide concise, informative summaries "
-                "of news articles, explain their implications, highlight contrasting viewpoints, "
-                "and identify important trends. Use a warm and conversational tone."
-            ),
-            query=main_prompt,
-            temperature=0.7,
-            lastk=10,  
-            session_id=session_id
+    elif "2" in intent:  # Refinement request
+        # The refinement context will be available through lastk
+        main_prompt = (
+            "The user has asked to refine the previous summary. "
+            "Please provide a refined analysis based on their specific feedback: " + message
         )
         
-        response_text = main_response.get('response', '')
-
-        # Default button always included
-        buttons = [
-            {
-                "type": "button",
-                "text": "📘 How to interact with the bot",
-                "msg": "interaction_info",
-                "msg_in_chat_window": True,
-                "msg_processing_type": "sendMessage"
-            }
-        ]
-
-        # Add "Refine and combine all analysis" button if the query is news-related
-        if "news" in message.lower() or "tell me about" in message.lower():
-            buttons.append({
-                "type": "button",
-                "text": "🧠 Refine and combine all analysis",
-                "msg": "refine_analysis",
-                "msg_in_chat_window": True,
-                "msg_processing_type": "sendMessage"
-            })
+    elif "3" in intent:  # Confirmation
+        main_prompt = (
+            "The user has confirmed they are satisfied with the summary. "
+            "Thank them and ask if they would like to explore another news topic."
+        )
         
-        return jsonify({
-            "text": "",
-            "attachments": [
-                {
-                    "title": "What would you like to do next? 😊",
-                    "text": "👇 Select an action below:",
-                    "actions": buttons
-                }
-            ]
-        })
+    else:  # Intent 4 or any other case
+        main_prompt = (
+            "I'm a news assistant that can help you get summaries and analysis of recent news. "
+            "What topic would you like to know about today?"
+        )
+    
+    # Generate the main response
+    main_response = generate(
+        model='4o-mini',
+        system=(
+            "You are a news analyst and summarizer. You provide concise, informative summaries "
+            "of news articles, explain their implications, highlight contrasting viewpoints, "
+            "and identify important trends. Be conversational and engaging."
+        ),
+        query=main_prompt,
+        temperature=0.7,
+        lastk=10,  # Remember conversation history
+        session_id=session_id  # Use the main session ID
+    )
+    
+    response_text = main_response.get('response', '')
+    
+    return jsonify({"text": response_text})
 
 @app.errorhandler(404)
 def page_not_found(e):
