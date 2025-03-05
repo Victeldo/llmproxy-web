@@ -159,8 +159,38 @@ def main():
     )
     
     response_text = main_response.get('response', '')
+
+    # Add interactive buttons
+    buttons = [
+        {
+            "type": "button",
+            "text": "📘 How to interact with the bot",
+            "msg": "interaction_info",
+            "msg_in_chat_window": True,
+            "msg_processing_type": "sendMessage"
+        }
+    ]
     
-    return jsonify({"text": response_text})
+    # Add "Refine and combine all analysis" button for news-related queries
+    if intent in ["1", "2"]:
+        buttons.append({
+            "type": "button",
+            "text": "🧠 Refine and combine all analysis",
+            "msg": "refine_analysis",
+            "msg_in_chat_window": True,
+            "msg_processing_type": "sendMessage"
+        })
+    
+    return jsonify({
+        "text": response_text,
+        "attachments": [
+            {
+                "title": "What would you like to do next? 😊",
+                "text": "👇 Select an action below:",
+                "actions": buttons
+            }
+        ]
+    })
 
 @app.errorhandler(404)
 def page_not_found(e):
