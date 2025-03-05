@@ -140,8 +140,8 @@ def main():
         
     else:  # Intent 4 or any other case
         main_prompt = (
-            "I'm a news assistant that can help you get summaries and analysis of recent news. "
-            "What topic would you like to know about today?"
+            "If the user is new, tell them that you are a news assistant that can help them get summaries and analysis of recent news. "
+            "Otherwise, tell the user you are unsure and would like them to repeat their query and remind them what you can help them with"
         )
     
     # Generate the main response
