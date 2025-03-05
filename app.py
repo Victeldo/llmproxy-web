@@ -69,7 +69,7 @@ def format_articles_for_prompt(articles, keyword):
 @app.route('/', methods=['POST'])
 def main():
     data = request.get_json()
-    user = data.get("user_name", "Unknown")
+    user = data.get("user_name", "Friend")
     message = data.get("text", "").strip()
     
     # Ignore bot messages or empty input.
@@ -83,9 +83,13 @@ def main():
     # Handle specific button clicks
     if message == "interaction_info":
         return jsonify({
-            "text": "You can interact with the bot by typing your queries directly. "
-                    "You can ask for news summaries, request analysis, or refine previous responses. "
-                    "You can also use the buttons provided for quick actions."
+            "text": (
+                "👋 Hi there! You can interact with me by typing your queries directly. \n"
+                "📰 **News Summaries:** Ask me about the latest news on any topic.\n"
+                "🧠 **Analysis Requests:** I can provide insights and detailed analysis.\n"
+                "🔍 **Refine Responses:** Click the buttons for quick actions or ask me to refine my analysis.\n"
+                "😊 I'm here to help, so feel free to ask me anything!"
+            )
         })
     
     elif message == "refine_analysis":
@@ -107,7 +111,9 @@ def main():
         )
         
         response_text = main_response.get('response', '')
-        return jsonify({"text": response_text})
+        return jsonify({
+            "text": f"🧠 Here's your refined analysis, {user}! Let me know if you need more insights. 😊"
+        })
     
     else:
         # Generate a normal response to a user query
@@ -153,11 +159,11 @@ def main():
             })
         
         return jsonify({
-            "text": response_text,
+            "text": f"📢 Here's what I found for you, {user}! 👀 \n\n{response_text}",
             "attachments": [
                 {
-                    "title": "Choose an option:",
-                    "text": "Select an action below:",
+                    "title": "What would you like to do next? 😊",
+                    "text": "👇 Select an action below:",
                     "actions": buttons
                 }
             ]
