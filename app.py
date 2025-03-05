@@ -120,7 +120,7 @@ def main():
     else:
         # Generate a normal response to a user query
         main_prompt = (
-            "Analyze the user's query and provide relevant news or analysis. "
+            "Analyze the user's query and provide relevant news or analysis. If the user seems new, just tell them who you are and what you can help them with. "
             f"User query: {message}"
         )
         
