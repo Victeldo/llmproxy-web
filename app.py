@@ -142,8 +142,8 @@ def main():
             }
         ]
 
-        # Add "Refine and combine all analysis" button if the response suggests more interaction
-        if "Would you like more details?" in response_text or "Do you want me to refine the analysis?" in response_text:
+        # Add "Refine and combine all analysis" button if the query is news-related
+        if "news" in message.lower() or "tell me about" in message.lower():
             buttons.append({
                 "type": "button",
                 "text": "🧠 Refine and combine all analysis",
