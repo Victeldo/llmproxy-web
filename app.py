@@ -1,3 +1,71 @@
+import os
+import requests
+from flask import Flask, request, jsonify
+from llmproxy import generate
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
+
+news_key = os.environ.get("newsKey")
+news_url = os.environ.get("newsUrl")
+
+def keyword_extraction_agent(message, session_id):
+    """Extract the main keyword from the user query using the persistent session id."""
+    keyword_prompt = (
+        "Extract the main keyword from the following request. "
+        "Return only the keyword: " + message
+    )
+    extraction_response = generate(
+        model='4o-mini',
+        system="You are a keyword extraction assistant.",
+        query=keyword_prompt,
+        temperature=0.0,
+        lastk=10,  
+        session_id=session_id
+    )
+    keyword = extraction_response.get('response', '').strip()
+    return keyword
+
+def news_fetching_agent(keyword):
+    """Fetch news articles related to the extracted keyword."""
+    one_week_ago_date = datetime.today() - timedelta(days=7)
+    from_date = one_week_ago_date.strftime("%Y-%m-%d")
+    params = {
+        "q": keyword,
+        "from": from_date,
+        "sortBy": "popularity",
+        "pageSize": 5,
+        "apiKey": news_key
+    }
+    articles = []
+    try:
+        news_response = requests.get(news_url, params=params)
+        if news_response.status_code == 200:
+            data_json = news_response.json()
+            if data_json.get("status") == "ok":
+                articles = data_json.get("articles", [])
+            else:
+                print("Error from news API:", data_json.get("message"))
+        else:
+            print(f"Error: Received status code {news_response.status_code} from news API.")
+    except Exception as e:
+        print("Exception while fetching news:", e)
+    return articles
+
+def format_articles_for_prompt(articles, keyword):
+    """Format articles into a text string for the meta-agent."""
+    if not articles:
+        return f"No news articles found for '{keyword}'."
+    
+    articles_text = f"Here are the latest news articles about '{keyword}':\n\n"
+    for i, article in enumerate(articles[:5], 1):
+        title = article.get("title", "No title")
+        description = article.get("description", "No description provided")
+        url = article.get("url", "No URL")
+        articles_text += f"Article {i}:\nTitle: {title}\nDescription: {description}\nURL: {url}\n\n"
+    
+    return articles_text
+
 @app.route('/', methods=['POST'])
 def main():
     data = request.get_json()
@@ -91,3 +159,10 @@ def main():
         else:
             # Regular response without buttons
             return jsonify({"text": response_text})
+
+@app.errorhandler(404)
+def page_not_found(e):
+    return "Not Found", 404
+
+if __name__ == "__main__":
+    app.run(debug=True)
