@@ -161,7 +161,7 @@ def main():
             })
         
         return jsonify({
-            "text": f"📢 Here's what I found for you, {user}! 👀 \n\n{response_text}",
+            "text": "",
             "attachments": [
                 {
                     "title": "What would you like to do next? 😊",
