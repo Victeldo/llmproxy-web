@@ -51,7 +51,7 @@ def news_fetching_agent(query_term):
         "q": query_term,
         "from": from_date,
         "sortBy": "popularity",
-        "pageSize": 50,
+        "pageSize": 20,
         "apiKey": news_key
     }
     articles = []
