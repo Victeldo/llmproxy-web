@@ -81,13 +81,13 @@ def filter_relevant_articles(articles, topic, session_id):
         relevance_prompt = (
             f"Given the topic: '{topic}', determine if this article is relevant.\n\n"
             f"Article: {full_text}\n\n"
-            "Respond only with 'YES' or 'NO'. No other words or explanations."
+            "Respond only with 0 for NO or 1 for YES. No other words or explanations."
         )
         
         relevance_response = generate(
             model='4o-mini',
             system="You determine if news articles are relevant based on the given topic. "
-                   "Always respond with either 'YES' or 'NO'.",
+                   "Always respond with either 0 or 1.",
             query=relevance_prompt,
             temperature=0.0,
             lastk=0,
@@ -96,7 +96,7 @@ def filter_relevant_articles(articles, topic, session_id):
         
         relevance_result = relevance_response.get('response', '').strip()
         
-        if relevance_result == "YES":
+        if "1" in relevance_result:
             filtered_articles.append(article)
     
     return filtered_articles
