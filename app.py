@@ -26,12 +26,29 @@ def keyword_extraction_agent(message, session_id):
     keyword = extraction_response.get('response', '').strip()
     return keyword
 
-def news_fetching_agent(keyword):
-    """Fetch news articles related to the extracted keyword."""
+def topic_extraction_agent(message, session_id):
+    """Extract the main topic from the user query using the persistent session id."""
+    topic_prompt = (
+        "Extract the main topic from the following request. "
+        "Return only the topic: " + message
+    )
+    extraction_response = generate(
+        model='4o-mini',
+        system="You are a topic extraction assistant.",
+        query=topic_prompt,
+        temperature=0.0,
+        lastk=10,
+        session_id=session_id
+    )
+    topic = extraction_response.get('response', '').strip()
+    return topic
+
+def news_fetching_agent(query_term):
+    """Fetch news articles related to the given query term."""
     one_week_ago_date = datetime.today() - timedelta(days=7)
     from_date = one_week_ago_date.strftime("%Y-%m-%d")
     params = {
-        "q": keyword,
+        "q": query_term,
         "from": from_date,
         "sortBy": "popularity",
         "pageSize": 5,
@@ -52,12 +69,44 @@ def news_fetching_agent(keyword):
         print("Exception while fetching news:", e)
     return articles
 
-def format_articles_for_prompt(articles, keyword):
+def filter_relevant_articles(articles, topic, session_id):
+    """Use LLM to filter only relevant articles from API results."""
+    filtered_articles = []
+    
+    for article in articles:
+        title = article.get("title", "No title")
+        description = article.get("description", "No description provided")
+        full_text = f"Title: {title}\nDescription: {description}"
+        
+        relevance_prompt = (
+            f"Given the topic: '{topic}', determine if this article is relevant.\n\n"
+            f"Article: {full_text}\n\n"
+            "Respond only with 'YES' or 'NO'. No other words or explanations."
+        )
+        
+        relevance_response = generate(
+            model='4o-mini',
+            system="You determine if news articles are relevant based on the given topic. "
+                   "Always respond with either 'YES' or 'NO'.",
+            query=relevance_prompt,
+            temperature=0.0,
+            lastk=0,
+            session_id=session_id
+        )
+        
+        relevance_result = relevance_response.get('response', '').strip()
+        
+        if relevance_result == "YES":
+            filtered_articles.append(article)
+    
+    return filtered_articles
+
+def format_articles_for_prompt(articles, query_term):
     """Format articles into a text string for the meta-agent."""
     if not articles:
-        return f"No news articles found for '{keyword}'."
+        return f"No news articles found for '{query_term}'."
     
-    articles_text = f"Here are the latest news articles about '{keyword}':\n\n"
+    articles_text = f"Here are the latest news articles about '{query_term}':\n\n"
     for i, article in enumerate(articles[:5], 1):
         title = article.get("title", "No title")
         description = article.get("description", "No description provided")
@@ -105,19 +154,32 @@ def main():
     
     # Handle based on intent
     if "1" in intent:  # New news query
-        # Extract keyword
-        keyword = keyword_extraction_agent(message, session_id)
-        print(f"Extracted keyword: '{keyword}'")
+        # Extract topic instead of just a keyword
+        topic = topic_extraction_agent(message, session_id)
+        print(f"Extracted topic: '{topic}'")
         
         # Fetch news articles
-        articles = news_fetching_agent(keyword)
+        articles = news_fetching_agent(topic)
+        print(f"Fetched {len(articles)} articles before filtering.")
         
-        # Format articles for the main prompt
-        articles_text = format_articles_for_prompt(articles, keyword)
+        # Filter articles using LLM
+        relevant_articles = filter_relevant_articles(articles, topic, session_id)
+        print(f"Retained {len(relevant_articles)} relevant articles after filtering.")
         
-        # Ask the main agent to summarize and analyze
+        # Handle the case when no relevant articles are found
+        if not relevant_articles:
+            response_text = (
+                f"Sorry, I couldn't find any relevant news articles on '{topic}'. "
+                "Would you like to try a different topic or refine your request?"
+            )
+            return jsonify({"text": response_text})
+        
+        # Format relevant articles for the main prompt
+        articles_text = format_articles_for_prompt(relevant_articles, topic)
+        
+        # Construct main prompt for summarization
         main_prompt = (
-            f"The user asked about news on '{keyword}'. "
+            f"The user asked about news on '{topic}'.\n\n"
             f"{articles_text}\n\n"
             "Please provide a concise summary of these articles, explain their implications, "
             "highlight any contrasting viewpoints, and mention important trends. "
